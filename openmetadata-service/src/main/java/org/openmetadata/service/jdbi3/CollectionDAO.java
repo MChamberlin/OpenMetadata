@@ -64,6 +64,7 @@ import org.openmetadata.schema.auth.RefreshToken;
 import org.openmetadata.schema.auth.TokenType;
 import org.openmetadata.schema.dataInsight.DataInsightChart;
 import org.openmetadata.schema.dataInsight.kpi.Kpi;
+import org.openmetadata.schema.dataInsightNew.DIChart;
 import org.openmetadata.schema.email.SmtpSettings;
 import org.openmetadata.schema.entities.docStore.Document;
 import org.openmetadata.schema.entity.Bot;
@@ -307,6 +308,9 @@ public interface CollectionDAO {
 
   @CreateSqlObject
   WebAnalyticEventDAO webAnalyticEventDAO();
+
+  @CreateSqlObject
+  DIChartDao diChartDAO();
 
   @CreateSqlObject
   DataInsightChartDAO dataInsightChartDAO();
@@ -3710,6 +3714,23 @@ public interface CollectionDAO {
     @Override
     default Class<WebAnalyticEvent> getEntityClass() {
       return WebAnalyticEvent.class;
+    }
+
+    @Override
+    default String getNameHashColumn() {
+      return "fqnHash";
+    }
+  }
+
+  interface DIChartDao extends EntityDAO<DIChart> {
+    @Override
+    default String getTableName() {
+      return "di_chart_entity";
+    }
+
+    @Override
+    default Class<DIChart> getEntityClass() {
+      return DIChart.class;
     }
 
     @Override
