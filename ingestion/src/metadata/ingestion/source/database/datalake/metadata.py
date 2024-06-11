@@ -341,6 +341,7 @@ class DatalakeSource(DatabaseServiceSource):
             )
             content = json.loads(metadata_config_response)
             metadata_entry = StorageContainerConfig.parse_obj(content)
+            logger.debug(f"Metadata entry: {metadata_entry}")
         except ReadException:
             metadata_entry = None
         if self.source_config.includeTables:
@@ -366,6 +367,7 @@ class DatalakeSource(DatabaseServiceSource):
                 if prefix:
                     kwargs["Prefix"] = prefix if prefix.endswith("/") else f"{prefix}/"
                 for key in list_s3_objects(self.client, **kwargs):
+                    logger.debug(f"Scanning key: {key}")
                     table_name = self.standardize_table_name(bucket_name, key["Key"])
                     if self.filter_dl_table(table_name):
                         continue

@@ -50,6 +50,9 @@ class S3ContainerDetails(BaseModel):
 
     name: str = Field(..., description="Bucket name")
     prefix: str = Field(..., description="Prefix for the container")
+    description: Optional[basic.Markdown] = Field(
+        None, description='Description of the container instance.'
+    )
     number_of_objects: float = Field(
         ...,
         description="Total nr. of objects",
@@ -78,7 +81,6 @@ class S3ContainerDetails(BaseModel):
     sourceUrl: Optional[basic.SourceUrl] = Field(
         None, description="Source URL of the container."
     )
-
     fullPath: Optional[str] = Field(
         None, description="Full path of the container/file."
     )

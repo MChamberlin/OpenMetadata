@@ -20,6 +20,11 @@
           "description": "The path where the data resides in the container, excluding the bucket name",
           "type": "string"
         },
+        "description": {
+          "title": "Description",
+          "description": "The description of the container",
+          "$ref": "../../type/basic.json#/definitions/markdown"
+        },
         "structureFormat": {
           "title": "Schema format",
           "description": "What's the schema format for the container, eg. avro, parquet, csv.",
@@ -49,7 +54,7 @@
         }
       },
       "required": [
-        "containerName" ,"dataPath"
+        "containerName", "dataPath"
       ]
     }
   },
