@@ -21,6 +21,9 @@ from metadata.generated.schema.entity.services.connections.database.iceberg.rest
     RestCatalogConnection,
 )
 from metadata.ingestion.source.database.iceberg.catalog.base import IcebergCatalogBase
+from metadata.utils.logger import ingestion_logger
+
+logger = ingestion_logger()
 
 
 class IcebergRestCatalog(IcebergCatalogBase):
@@ -81,4 +84,5 @@ class IcebergRestCatalog(IcebergCatalogBase):
                 "rest.signing_region": catalog.connection.sigv4.signingRegion,
                 "rest.signing_name": catalog.connection.sigv4.signingName,
             }
+        logger.debug(f"Catalog {catalog.name} Parameters: {parameters}")
         return load_rest(catalog.name, parameters)
