@@ -37,7 +37,7 @@ def namespace_to_str(namespace: tuple[str]) -> str:
     return ".".join(namespace)
 
 
-def get_table_name_as_str(table: pyiceberg.table.Table) -> str:
+def get_table_name_as_str(table: tuple[str]) -> str:
     """Returns the Table Name as Tring from a PyIceberg Table.
 
     The PyIceberg table name is returned as tuple and we turn them into a String
