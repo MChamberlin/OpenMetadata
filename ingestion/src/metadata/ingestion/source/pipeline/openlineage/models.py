@@ -14,7 +14,7 @@ Openlineage Source Model module
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 
 @dataclass
@@ -78,6 +78,7 @@ class TableDetails:
 
     schema: str
     name: str
+    database: Union[str, None] = None
 
 
 class EventType(str, Enum):

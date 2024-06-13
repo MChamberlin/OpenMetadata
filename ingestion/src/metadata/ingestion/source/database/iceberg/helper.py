@@ -44,7 +44,7 @@ def get_table_name_as_str(table: tuple[str]) -> str:
     concatenating the items with a '.' in between.
     """
     # We are skipping the first item because it is the schema name.
-    return ".".join(table.name()[1:])
+    return ".".join(table[1:])
 
 
 def get_column_from_partition(

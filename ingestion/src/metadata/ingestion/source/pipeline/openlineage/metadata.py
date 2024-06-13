@@ -103,6 +103,7 @@ class OpenlineageSource(PipelineServiceSource):
         :param data: single entry from inputs/outputs objects
         :return: TableDetails object with schema and name
         """
+        logger.debug(f"Extracting table details from OpenLineage event: {data}")
         symlinks = data.get("facets", {}).get("symlinks", {}).get("identifiers", [])
 
         # for some OL events name can be extracted from dataset facet but symlinks is preferred so - if present - we
@@ -129,18 +130,25 @@ class OpenlineageSource(PipelineServiceSource):
             raise ValueError(
                 f"input table name should be of 'schema.table' format! Received: {name}"
             )
+        
+        if len(name_parts) > 2:
+            database = name_parts[-3]
+        else:
+            database = None
 
         # we take last two elements to explicitly collect schema and table names
         # in BigQuery Open Lineage events name_parts would be list of 3 elements as first one is GCP Project ID
         # however, concept of GCP Project ID is not represented in Open Metadata and hence - we need to skip this part
-        return TableDetails(name=name_parts[-1], schema=name_parts[-2])
+        details = TableDetails(name=name_parts[-1], schema=name_parts[-2], database=database)
+        logger.debug(f"Extracted table details: {details}")
+        return details
 
     def _get_table_fqn(self, table_details: TableDetails) -> Optional[str]:
         try:
             return self._get_table_fqn_from_om(table_details)
         except FQNNotFoundException:
             try:
-                schema_fqn = self._get_schema_fqn_from_om(table_details.schema)
+                schema_fqn = self._get_schema_fqn_from_om(table_details)
 
                 return f"{schema_fqn}.{table_details.name}"
             except FQNNotFoundException:
@@ -156,11 +164,12 @@ class OpenlineageSource(PipelineServiceSource):
         result = None
         services = self.get_db_service_names()
         for db_service in services:
+            logger.debug(f"Looking for table {table_details} in service {db_service}")
             result = fqn.build(
                 metadata=self.metadata,
                 entity_type=Table,
                 service_name=db_service,
-                database_name=None,
+                database_name=table_details.database,
                 schema_name=table_details.schema,
                 table_name=table_details.name,
             )
@@ -168,9 +177,10 @@ class OpenlineageSource(PipelineServiceSource):
             raise FQNNotFoundException(
                 f"Table FQN not found for table: {table_details} within services: {services}"
             )
+        logger.debug(f"Found table FQN: {result}")
         return result
 
-    def _get_schema_fqn_from_om(self, schema: str) -> Optional[str]:
+    def _get_schema_fqn_from_om(self, table_details: TableDetails) -> Optional[str]:
         """
         Based on partial schema name look for any matching DatabaseSchema object in open metadata.
 
@@ -181,23 +191,24 @@ class OpenlineageSource(PipelineServiceSource):
         services = self.get_db_service_names()
 
         for db_service in services:
+            logger.debug(f"Looking for schema {table_details.schema} in service {db_service}")
             result = fqn.build(
                 metadata=self.metadata,
                 entity_type=DatabaseSchema,
                 service_name=db_service,
-                database_name=None,
-                schema_name=schema,
+                database_name=table_details.database,
+                schema_name=table_details.schema,
                 skip_es_search=False,
             )
 
             if result:
+                logger.debug(f"Found schema FQN: {result}")
                 return result
 
         if not result:
             raise FQNNotFoundException(
                 f"Schema FQN not found within services: {services}"
             )
-
         return result
 
     @classmethod
@@ -264,6 +275,7 @@ class OpenlineageSource(PipelineServiceSource):
 
         try:
             table_details = OpenlineageSource._get_table_details(table)
+            logger.debug(f"table details: {table_details}")
         except ValueError as e:
             return Either(
                 left=StackTraceError(
@@ -283,7 +295,7 @@ class OpenlineageSource(PipelineServiceSource):
         # If OM Table FQN was not found based on OL Partial Name - we need to register it.
         if not om_table_fqn:
             try:
-                om_schema_fqn = self._get_schema_fqn_from_om(table_details.schema)
+                om_schema_fqn = self._get_schema_fqn_from_om(table_details)
             except FQNNotFoundException as e:
                 return Either(
                     left=StackTraceError(
@@ -400,22 +412,26 @@ class OpenlineageSource(PipelineServiceSource):
         self, pipeline_details: OpenLineageEvent
     ) -> Iterable[Either[AddLineageRequest]]:
         inputs, outputs = pipeline_details.inputs, pipeline_details.outputs
+        logger.debug(f"Pipeline details: {pipeline_details}")
 
         input_edges: List[LineageNode] = []
         output_edges: List[LineageNode] = []
 
         for spec in [(inputs, input_edges), (outputs, output_edges)]:
+            logger.debug(f"Spec: {spec}")
             tables, tables_list = spec
 
             for table in tables:
                 create_table_request = self.get_create_table_request(table)
 
                 if create_table_request:
+                    logger.debug(f"Create table request: {create_table_request}")
                     yield create_table_request
 
                 table_fqn = self._get_table_fqn(
                     OpenlineageSource._get_table_details(table)
                 )
+                logger.debug(f"Table fqn: {table_fqn}")
 
                 if table_fqn:
                     tables_list.append(
@@ -424,13 +440,16 @@ class OpenlineageSource(PipelineServiceSource):
                             uuid=self.metadata.get_by_name(Table, table_fqn).id,
                         )
                     )
+            logger.debug(f"Table list: {tables_list}")
 
         edges = [
             LineageEdge(from_node=n[0], to_node=n[1])
             for n in product(input_edges, output_edges)
         ]
+        logger.debug(f"Lineage edges: {edges}")
 
         column_lineage = self._get_column_lineage(inputs, outputs)
+        logger.debug(f"Column lineage: {column_lineage}")
 
         pipeline_fqn = fqn.build(
             metadata=self.metadata,
@@ -440,8 +459,9 @@ class OpenlineageSource(PipelineServiceSource):
         )
 
         pipeline_entity = self.metadata.get_by_name(entity=Pipeline, fqn=pipeline_fqn)
+        logger.debug(f"Pipeline entity: {pipeline_entity}")
         for edge in edges:
-            yield Either(
+            request = Either(
                 right=AddLineageRequest(
                     edge=EntitiesEdge(
                         fromEntity=EntityReference(
@@ -464,6 +484,8 @@ class OpenlineageSource(PipelineServiceSource):
                     ),
                 )
             )
+            logger.debug(f"Lineage request: {request}")
+            yield request
 
     def get_pipelines_list(self) -> Optional[List[Any]]:
         """Get List of all pipelines"""
@@ -484,15 +506,20 @@ class OpenlineageSource(PipelineServiceSource):
                         # There is no new messages, timeout is passed
                         session_active = False
                 else:
-                    logger.debug(f"new message {message.value()}")
+                    data = message.value()
+                    logger.debug(f"new message {data}")
                     empty_msg_cnt = 0
                     try:
-                        _result = message_to_open_lineage_event(
-                            json.loads(message.value())
-                        )
+                        if isinstance(data, bytes):
+                            data = data.decode("utf-8")
+                        _result = message_to_open_lineage_event(json.loads(data))
+                        logger.debug(f"Received raw OL event: {_result}")
                         result = self._filter_event_by_type(_result, EventType.COMPLETE)
                         if result:
+                            logger.debug(f"Emitting event: {_result}")
                             yield result
+                        else:
+                            logger.debug(f"Filtered event: {_result}")
                     except Exception as e:
                         logger.debug(e)
 
