@@ -169,10 +169,16 @@ class OpenlineageSource(PipelineServiceSource):
                 metadata=self.metadata,
                 entity_type=Table,
                 service_name=db_service,
-                database_name=table_details.database,
+                database_name=None,
                 schema_name=table_details.schema,
                 table_name=table_details.name,
             )
+            logger.debug(f"Result: {result}")
+            if self.metadata.get_by_name(Table, result):
+                return result
+            else:
+                result = None
+        
         if not result:
             raise FQNNotFoundException(
                 f"Table FQN not found for table: {table_details} within services: {services}"
@@ -252,10 +258,10 @@ class OpenlineageSource(PipelineServiceSource):
             fields = table_input["facets"]["schema"]["fields"]
 
             # @todo check if this way of passing type is ok
-            columns = [
+            columns = []
+            for f in fields:
+                logger.debug(f"Converting field to column: {f}")
                 Column(name=f.get("name"), dataType=f.get("type").upper())
-                for f in fields
-            ]
             return columns
         except KeyError:
             return None
