@@ -77,7 +77,10 @@ class GCSSource(StorageServiceSource):
     def __init__(self, config: WorkflowSource, metadata: OpenMetadata):
         super().__init__(config, metadata)
         self.gcs_clients = self.connection.client
-        self.gcs_readers = {project_id: get_reader(config_source=GCSConfig(), client=client) for project_id, client in self.gcs_clients.storage_client.clients.items()}
+        self.gcs_readers = {
+            project_id: get_reader(config_source=GCSConfig(), client=client)
+            for project_id, client in self.gcs_clients.storage_client.clients.items()
+        }
         self._bucket_cache: Dict[str, Container] = {}
 
     @classmethod
@@ -87,7 +90,9 @@ class GCSSource(StorageServiceSource):
         config: WorkflowSource = WorkflowSource.parse_obj(config_dict)
         connection: GcsConnection = config.serviceConnection.__root__.config
         if not isinstance(connection, GcsConnection):
-            raise InvalidSourceException(f"Expected GcsConnection, but got {connection}")
+            raise InvalidSourceException(
+                f"Expected GcsConnection, but got {connection}"
+            )
         return cls(config, metadata)
 
     def get_containers(self) -> Iterable[GCSContainerDetails]:
@@ -192,7 +197,9 @@ class GCSSource(StorageServiceSource):
                 config_source=GCSConfig(
                     securityConfig=self.service_connection.gcsConfig
                 ),
-                client=self.gcs_clients.storage_client.clients[bucket_response.project_id],
+                client=self.gcs_clients.storage_client.clients[
+                    bucket_response.project_id
+                ],
             )
             if columns:
                 prefix = (
@@ -246,7 +253,7 @@ class GCSSource(StorageServiceSource):
                 result.append(structured_container)
 
         return result
-    
+
     def _fetch_bucket(self, bucket_name: str) -> GCSBucketResponse:
         for project_id, client in self.gcs_clients.storage_client.clients.items():
             try:
@@ -276,16 +283,18 @@ class GCSSource(StorageServiceSource):
                     ):
                         self.status.filter(bucket.name, "Bucket Filtered Out")
                     else:
-                        results.append(GCSBucketResponse(
-                            name=bucket.name,
-                            project_id=project_id,
-                            creation_date=bucket.time_created
-                        ))
+                        results.append(
+                            GCSBucketResponse(
+                                name=bucket.name,
+                                project_id=project_id,
+                                creation_date=bucket.time_created,
+                            )
+                        )
         except Exception as err:
             logger.debug(traceback.format_exc())
             logger.error(f"Failed to fetch buckets list - {err}")
         return results
-    
+
     def _get_time_interval(days: int = 2):
         end = datetime.now()
         start = end - timedelta(days=days)
@@ -303,7 +312,9 @@ class GCSSource(StorageServiceSource):
             ]
             filter_ = " AND ".join(filters)
             interval = self._get_time_interval()
-            timeseries = self.gcs_clients.metrics_client.list_time_series(name=bucket.project_id, filter=filter_, interval=interval)
+            timeseries = self.gcs_clients.metrics_client.list_time_series(
+                name=bucket.project_id, filter=filter_, interval=interval
+            )
             point = list(timeseries)[-1].points[-1]
             return point.value.int64_value
         except Exception:
@@ -361,8 +372,15 @@ class GCSSource(StorageServiceSource):
         prefix = self._get_sample_file_prefix(metadata_entry=metadata_entry)
         try:
             if prefix:
-                response = self.gcs_clients.storage_client.list_blobs(bucket.name, project_id=bucket.project_id, prefix=prefix, max_results=1000)
-                candidate_keys = [entry.name for entry in response if entry and entry.name]
+                response = self.gcs_clients.storage_client.list_blobs(
+                    bucket.name,
+                    project_id=bucket.project_id,
+                    prefix=prefix,
+                    max_results=1000,
+                )
+                candidate_keys = [
+                    entry.name for entry in response if entry and entry.name
+                ]
                 # pick a random key out of the candidates if any were returned
                 if candidate_keys:
                     result_key = secrets.choice(candidate_keys)
@@ -395,7 +413,9 @@ class GCSSource(StorageServiceSource):
             logger.error(f"Unable to get source url: {exc}")
         return None
 
-    def _get_object_source_url(self, bucket: GCSBucketResponse, prefix: str) -> Optional[str]:
+    def _get_object_source_url(
+        self, bucket: GCSBucketResponse, prefix: str
+    ) -> Optional[str]:
         """
         Method to get the source url of GCS object
         """
@@ -409,7 +429,9 @@ class GCSSource(StorageServiceSource):
             logger.error(f"Unable to get source url: {exc}")
         return None
 
-    def _load_metadata_file(self, bucket: GCSBucketResponse) -> Optional[StorageContainerConfig]:
+    def _load_metadata_file(
+        self, bucket: GCSBucketResponse
+    ) -> Optional[StorageContainerConfig]:
         """
         Load the metadata template file from the root of the bucket, if it exists
         """

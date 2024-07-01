@@ -70,7 +70,9 @@ def test_connection(
     """
     project_id = client.storage_client.project_ids()[0]
 
-    def test_buckets(connection: GcsConnection, client: GcsObjectStoreClient, project_id: str):
+    def test_buckets(
+        connection: GcsConnection, client: GcsObjectStoreClient, project_id: str
+    ):
         if connection.bucketNames:
             for bucket_name in connection.bucketNames:
                 client.storage_client.list_blobs(bucket_name, project_id=project_id)
@@ -79,9 +81,14 @@ def test_connection(
 
     test_fn = {
         "ListBuckets": partial(
-            test_buckets, client=client, connection=service_connection, project_id=project_id,
+            test_buckets,
+            client=client,
+            connection=service_connection,
+            project_id=project_id,
         ),
-        "GetMetrics": partial(client.metrics_client.list_metric_descriptors, name=project_id,
+        "GetMetrics": partial(
+            client.metrics_client.list_metric_descriptors,
+            name=project_id,
         ),
     }
 

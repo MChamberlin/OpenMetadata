@@ -51,7 +51,7 @@ class GCSContainerDetails(BaseModel):
     name: str = Field(..., description="Bucket name")
     prefix: str = Field(..., description="Prefix for the container")
     description: Optional[basic.Markdown] = Field(
-        None, description='Description of the container instance.'
+        None, description="Description of the container instance."
     )
     number_of_objects: float = Field(
         ...,
