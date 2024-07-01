@@ -8,12 +8,13 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-"""A client for Google Cloud Bigtable that supports multiple projects."""
+"""A client for Google Cloud Storage that supports multiple projects."""
 from functools import partial
-from typing import List, Optional, Type
+from typing import List, Optional, Type, Union
 
 from google import auth
 from google.cloud.storage import Client
+from google.cloud.monitoring_v3 import MetricServiceClient
 
 NoProject = object()
 
@@ -24,7 +25,7 @@ class MultiProjectClient:
     to resolve it from ADC.
     Example usage:
     ```
-    from google.cloud.bigtable import Client
+    from google.cloud.storage import Client
     client = MultiProjectClient(Client, project_ids=["project1", "project2"])
     instances_project1 = client.list_instances("project1")
     instances_project2 = client.list_instances("project2")
@@ -32,7 +33,7 @@ class MultiProjectClient:
 
     def __init__(
         self,
-        client_class: Type[Client],
+        client_class: Union[Type[Client], Type[MetricServiceClient]],
         project_ids: Optional[List[str]] = None,
         **client_kwargs,
     ):

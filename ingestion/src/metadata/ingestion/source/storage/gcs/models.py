@@ -1,4 +1,4 @@
-#  Copyright 2021 Collate
+#  Copyright 2024 Collate
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
@@ -9,7 +9,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 """
-S3 custom pydantic models
+GCS custom pydantic models
 """
 from datetime import datetime
 from typing import List, Optional
@@ -33,7 +33,7 @@ class GCSBucketResponse(BaseModel):
         extra = Extra.forbid
 
     name: str = Field(..., description="Bucket name")
-    project_number: int = Field(..., description="Project number")
+    project_id: str = Field(..., description="Project ID")
     creation_date: Optional[datetime] = Field(
         None,
         description="Timestamp of Bucket creation in ISO format",

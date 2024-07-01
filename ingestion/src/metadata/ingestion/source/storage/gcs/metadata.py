@@ -1,4 +1,4 @@
-#  Copyright 2021 Collate
+#  Copyright 2024 Collate
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
@@ -8,7 +8,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-"""S3 object store extraction metadata"""
+"""GCS object store extraction metadata"""
 import json
 import secrets
 import traceback
@@ -17,6 +17,8 @@ from enum import Enum
 from typing import Dict, Iterable, List, Optional
 
 from pydantic import ValidationError
+from google.cloud.exceptions import NotFound
+from google.cloud.monitoring_v3.types import TimeInterval
 
 from metadata.generated.schema.api.data.createContainer import CreateContainerRequest
 from metadata.generated.schema.entity.data import container
@@ -61,8 +63,6 @@ from metadata.utils.logger import ingestion_logger
 
 logger = ingestion_logger()
 
-gcs_CLIENT_ROOT_RESPONSE = "Contents"
-
 
 class GCSMetric(Enum):
     NUMBER_OF_OBJECTS = "storage.googleapis.com/storage/object_count"
@@ -71,13 +71,13 @@ class GCSMetric(Enum):
 
 class GCSSource(StorageServiceSource):
     """
-    Source implementation to ingest S3 buckets data.
+    Source implementation to ingest GCS bucket data.
     """
 
     def __init__(self, config: WorkflowSource, metadata: OpenMetadata):
         super().__init__(config, metadata)
-        self.gcs_client = self.connection.client
-        self.gcs_reader = get_reader(config_source=GCSConfig(), client=self.gcs_client)
+        self.gcs_clients = self.connection.client
+        self.gcs_readers = {project_id: get_reader(config_source=GCSConfig(), client=client) for project_id, client in self.gcs_clients.storage_client.clients.items()}
         self._bucket_cache: Dict[str, Container] = {}
 
     @classmethod
@@ -130,7 +130,7 @@ class GCSSource(StorageServiceSource):
                         # nothing else do to for the current bucket, skipping to the next
                         continue
                 # If no global file, or no valid entries in the manifest, check for bucket level metadata file
-                metadata_config = self._load_metadata_file(bucket_name=bucket_name)
+                metadata_config = self._load_metadata_file(bucket=bucket_response)
                 if metadata_config:
                     yield from self._generate_structured_containers(
                         bucket_response=bucket_response,
@@ -181,7 +181,7 @@ class GCSSource(StorageServiceSource):
     ) -> Optional[GCSContainerDetails]:
         bucket_name = bucket_response.name
         sample_key = self._get_sample_file_path(
-            bucket_name=bucket_name, metadata_entry=metadata_entry
+            bucket=bucket_response, metadata_entry=metadata_entry
         )
         # if we have a sample file to fetch a schema from
         if sample_key:
@@ -192,7 +192,7 @@ class GCSSource(StorageServiceSource):
                 config_source=GCSConfig(
                     securityConfig=self.service_connection.gcsConfig
                 ),
-                client=self.gcs_client,
+                client=self.gcs_clients.storage_client.clients[bucket_response.project_id],
             )
             if columns:
                 prefix = (
@@ -205,10 +205,10 @@ class GCSSource(StorageServiceSource):
                     if bucket_response.creation_date
                     else None,
                     number_of_objects=self._fetch_metric(
-                        bucket_name=bucket_name, metric=GCSMetric.NUMBER_OF_OBJECTS
+                        bucket=bucket_response, metric=GCSMetric.NUMBER_OF_OBJECTS
                     ),
                     size=self._fetch_metric(
-                        bucket_name=bucket_name, metric=GCSMetric.BUCKET_SIZE_BYTES
+                        bucket=bucket_response, metric=GCSMetric.BUCKET_SIZE_BYTES
                     ),
                     file_formats=[container.FileFormat(metadata_entry.structureFormat)],
                     data_model=ContainerDataModel(
@@ -217,7 +217,7 @@ class GCSSource(StorageServiceSource):
                     parent=parent,
                     fullPath=self._get_full_path(bucket_name, prefix),
                     sourceUrl=self._get_object_source_url(
-                        bucket_name=bucket_name,
+                        bucket=bucket_response,
                         prefix=metadata_entry.dataPath.strip(KEY_SEPARATOR),
                     ),
                 )
@@ -247,23 +247,40 @@ class GCSSource(StorageServiceSource):
 
         return result
     
+    def _fetch_bucket(self, bucket_name: str) -> GCSBucketResponse:
+        for project_id, client in self.gcs_clients.storage_client.clients.items():
+            try:
+                bucket = client.get_bucket(bucket_name)
+            except NotFound:
+                continue
+            return GCSBucketResponse(
+                name=bucket.name,
+                project_id=project_id,
+                creation_date=bucket.time_created,
+            )
+
     def fetch_buckets(self) -> List[GCSBucketResponse]:
         results: List[GCSBucketResponse] = []
         try:
             if self.service_connection.bucketNames:
-                return [
-                    GCSBucketResponse(Name=bucket_name)
-                    for bucket_name in self.service_connection.bucketNames
-                ]
-            # No pagination required, as there is a hard 1000 limit on nr of buckets per aws account
-            for bucket in self.gcs_client.list_buckets():
-                if filter_by_container(
-                    self.source_config.containerFilterPattern,
-                    container_name=bucket.name,
-                ):
-                    self.status.filter(bucket.name, "Bucket Filtered Out")
-                else:
-                    results.append(GCSBucketResponse(name=bucket.name, creation_date=bucket.time_created))
+                for bucket_name in self.service_connection.bucketNames:
+                    bucket = self._fetch_bucket(bucket_name)
+                    if bucket:
+                        results.append(bucket)
+                return results
+            for project_id, client in self.gcs_clients.storage_client.clients.items():
+                for bucket in client.list_buckets():
+                    if filter_by_container(
+                        self.source_config.containerFilterPattern,
+                        container_name=bucket.name,
+                    ):
+                        self.status.filter(bucket.name, "Bucket Filtered Out")
+                    else:
+                        results.append(GCSBucketResponse(
+                            name=bucket.name,
+                            project_id=project_id,
+                            creation_date=bucket.time_created
+                        ))
         except Exception as err:
             logger.debug(traceback.format_exc())
             logger.error(f"Failed to fetch buckets list - {err}")
@@ -277,22 +294,22 @@ class GCSSource(StorageServiceSource):
         end_time = end.isoformat(timespec="seconds") + "Z"
         return TimeInterval(end_time=end_time, start_time=start_time)
 
-    def _fetch_metric(self, bucket_name: str, metric: GCSMetric) -> float:
+    def _fetch_metric(self, bucket: GCSBucketResponse, metric: GCSMetric) -> float:
         try:
             filters = [
                 # 'resource.type="storage.googleapis.com/bucket"',
-                f'resource.labels.bucket_name="{bucket_name}"',
+                f'resource.labels.bucket_name="{bucket.name}"',
                 f'metric.type="{metric.value}"',
             ]
             filter_ = " AND ".join(filters)
             interval = self._get_time_interval()
-            timeseries = self.metrics_client.list_time_series(filter=filter_, interval=interval)
+            timeseries = self.gcs_clients.metrics_client.list_time_series(name=bucket.project_id, filter=filter_, interval=interval)
             point = list(timeseries)[-1].points[-1]
             return point.value.int64_value
         except Exception:
             logger.debug(traceback.format_exc())
             logger.warning(
-                f"Failed fetching metric {metric.value} for bucket {bucket_name}, returning 0"
+                f"Failed fetching metric {metric.value} for bucket {bucket.name}, returning 0"
             )
         return 0
 
@@ -306,15 +323,15 @@ class GCSSource(StorageServiceSource):
             if bucket_response.creation_date
             else None,
             number_of_objects=self._fetch_metric(
-                bucket_name=bucket_response.name, metric=GCSMetric.NUMBER_OF_OBJECTS
+                bucket=bucket_response, metric=GCSMetric.NUMBER_OF_OBJECTS
             ),
             size=self._fetch_metric(
-                bucket_name=bucket_response.name, metric=GCSMetric.BUCKET_SIZE_BYTES
+                bucket=bucket_response, metric=GCSMetric.BUCKET_SIZE_BYTES
             ),
             file_formats=[],
             data_model=None,
             fullPath=self._get_full_path(bucket_name=bucket_response.name),
-            sourceUrl=self._get_bucket_source_url(bucket_name=bucket_response.name),
+            sourceUrl=self._get_bucket_source_url(bucket=bucket_response),
         )
 
     def _clean_path(self, path: str) -> str:
@@ -335,7 +352,7 @@ class GCSSource(StorageServiceSource):
         return full_path
 
     def _get_sample_file_path(
-        self, bucket_name: str, metadata_entry: MetadataEntry
+        self, bucket: GCSBucketResponse, metadata_entry: MetadataEntry
     ) -> Optional[str]:
         """
         Given a bucket and a metadata entry, returns the full path key to a file which can then be used to infer schema
@@ -344,7 +361,7 @@ class GCSSource(StorageServiceSource):
         prefix = self._get_sample_file_prefix(metadata_entry=metadata_entry)
         try:
             if prefix:
-                response = self.gcs_client.list_blobs(bucket_name, prefix=prefix, max_results=1000)
+                response = self.gcs_clients.storage_client.list_blobs(bucket.name, project_id=bucket.project_id, prefix=prefix, max_results=1000)
                 candidate_keys = [entry.name for entry in response if entry and entry.name]
                 # pick a random key out of the candidates if any were returned
                 if candidate_keys:
@@ -360,64 +377,50 @@ class GCSSource(StorageServiceSource):
         except Exception:
             logger.debug(traceback.format_exc())
             logger.warning(
-                f"Error when trying to list objects in GCS bucket {bucket_name} at prefix {prefix}"
+                f"Error when trying to list objects in GCS bucket {bucket.name} at prefix {prefix}"
             )
             return None
 
-    def get_gcs_bucket_project(self, bucket_name: str) -> str:
+    def _get_bucket_source_url(self, bucket: GCSBucketResponse) -> Optional[str]:
         """
-        Method to fetch the bucket project number
-        """
-        project = None
-        try:
-            bucket = self.gcs_client.get_bucket(bucket_name)
-            project = bucket.project_number
-        except Exception:
-            logger.debug(traceback.format_exc())
-            logger.warning(f"Unable to get the project for bucket: {bucket_name}")
-        return project or self.service_connection.gcsConfig.projectId
-
-    def _get_bucket_source_url(self, bucket_name: str) -> Optional[str]:
-        """
-        Method to get the source url of gcs bucket
+        Method to get the source url of GCS bucket
         """
         try:
-            project = self.get_gcs_bucket_project(bucket_name=bucket_name)
             return (
-                f"https://console.cloud.google.com/storage/browser/{bucket_name}"
-                f";tab=objects?project={project}"
+                f"https://console.cloud.google.com/storage/browser/{bucket.name}"
+                f";tab=objects?project={bucket.project_id}"
             )
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.error(f"Unable to get source url: {exc}")
         return None
 
-    def _get_object_source_url(self, bucket_name: str, prefix: str) -> Optional[str]:
+    def _get_object_source_url(self, bucket: GCSBucketResponse, prefix: str) -> Optional[str]:
         """
-        Method to get the source url of gcs object
+        Method to get the source url of GCS object
         """
         try:
-            project = self.get_gcs_bucket_project(bucket_name=bucket_name)
             return (
-                f"https://console.cloud.google.com/storage/browser/_details/{bucket_name}/{prefix}"
-                f";tab=live_object?project={project}"
+                f"https://console.cloud.google.com/storage/browser/_details/{bucket.name}/{prefix}"
+                f";tab=live_object?project={bucket.project_id}"
             )
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.error(f"Unable to get source url: {exc}")
         return None
 
-    def _load_metadata_file(self, bucket_name: str) -> Optional[StorageContainerConfig]:
+    def _load_metadata_file(self, bucket: GCSBucketResponse) -> Optional[StorageContainerConfig]:
         """
         Load the metadata template file from the root of the bucket, if it exists
         """
         try:
             logger.info(
-                f"Looking for metadata template file at - gs://{bucket_name}/{OPENMETADATA_TEMPLATE_FILE_NAME}"
+                f"Looking for metadata template file at - gs://{bucket.name}/{OPENMETADATA_TEMPLATE_FILE_NAME}"
             )
-            response_object = self.gcs_reader.read(
+            reader = self.gcs_readers.get(bucket.project_id)
+            response_object = reader.read(
                 path=OPENMETADATA_TEMPLATE_FILE_NAME,
-                bucket_name=bucket_name,
+                bucket_name=bucket.name,
                 verbose=False,
             )
             content = json.loads(response_object)
@@ -425,11 +428,11 @@ class GCSSource(StorageServiceSource):
             return metadata_config
         except ReadException:
             logger.warning(
-                f"No metadata file found at gs://{bucket_name}/{OPENMETADATA_TEMPLATE_FILE_NAME}"
+                f"No metadata file found at gs://{bucket.name}/{OPENMETADATA_TEMPLATE_FILE_NAME}"
             )
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.warning(
-                f"Failed loading metadata file gs://{bucket_name}/{OPENMETADATA_TEMPLATE_FILE_NAME}-{exc}"
+                f"Failed loading metadata file gs://{bucket.name}/{OPENMETADATA_TEMPLATE_FILE_NAME}-{exc}"
             )
         return None
