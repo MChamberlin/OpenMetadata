@@ -88,7 +88,7 @@ def test_connection(
         ),
         "GetMetrics": partial(
             client.metrics_client.list_metric_descriptors,
-            name=project_id,
+            name=f"projects/{project_id}",
         ),
     }
 

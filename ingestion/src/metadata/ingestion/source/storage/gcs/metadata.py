@@ -66,17 +66,17 @@ logger = ingestion_logger()
 
 class GCSMetric(Enum):
     NUMBER_OF_OBJECTS = "storage.googleapis.com/storage/object_count"
-    BUCKET_SIZE_BYTES = "storage.googleapis.com/storage/"
+    BUCKET_SIZE_BYTES = "storage.googleapis.com/storage/total_bytes"
 
 
-class GCSSource(StorageServiceSource):
+class GcsSource(StorageServiceSource):
     """
     Source implementation to ingest GCS bucket data.
     """
 
     def __init__(self, config: WorkflowSource, metadata: OpenMetadata):
         super().__init__(config, metadata)
-        self.gcs_clients = self.connection.client
+        self.gcs_clients = self.connection
         self.gcs_readers = {
             project_id: get_reader(config_source=GCSConfig(), client=client)
             for project_id, client in self.gcs_clients.storage_client.clients.items()
@@ -195,7 +195,7 @@ class GCSSource(StorageServiceSource):
                 sample_key=sample_key,
                 metadata_entry=metadata_entry,
                 config_source=GCSConfig(
-                    securityConfig=self.service_connection.gcsConfig
+                    securityConfig=self.service_connection.credentials
                 ),
                 client=self.gcs_clients.storage_client.clients[
                     bucket_response.project_id
@@ -295,7 +295,7 @@ class GCSSource(StorageServiceSource):
             logger.error(f"Failed to fetch buckets list - {err}")
         return results
 
-    def _get_time_interval(days: int = 2):
+    def _get_time_interval(self, days: int = 2):
         end = datetime.now()
         start = end - timedelta(days=days)
 
@@ -306,14 +306,13 @@ class GCSSource(StorageServiceSource):
     def _fetch_metric(self, bucket: GCSBucketResponse, metric: GCSMetric) -> float:
         try:
             filters = [
-                # 'resource.type="storage.googleapis.com/bucket"',
                 f'resource.labels.bucket_name="{bucket.name}"',
                 f'metric.type="{metric.value}"',
             ]
             filter_ = " AND ".join(filters)
             interval = self._get_time_interval()
             timeseries = self.gcs_clients.metrics_client.list_time_series(
-                name=bucket.project_id, filter=filter_, interval=interval
+                name=f"projects/{bucket.project_id}", filter=filter_, interval=interval
             )
             point = list(timeseries)[-1].points[-1]
             return point.value.int64_value
@@ -372,14 +371,16 @@ class GCSSource(StorageServiceSource):
         prefix = self._get_sample_file_prefix(metadata_entry=metadata_entry)
         try:
             if prefix:
-                response = self.gcs_clients.storage_client.list_blobs(
+                client = self.gcs_clients.storage_client.clients[bucket.project_id]
+                response = client.list_blobs(
                     bucket.name,
-                    project_id=bucket.project_id,
                     prefix=prefix,
                     max_results=1000,
                 )
                 candidate_keys = [
-                    entry.name for entry in response if entry and entry.name
+                    entry.name
+                    for entry in response
+                    if entry.name.endswith(metadata_entry.structureFormat)
                 ]
                 # pick a random key out of the candidates if any were returned
                 if candidate_keys:
